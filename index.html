@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NULLPTR — теневой узел сети</title>
+<meta name="description" content="NULLPTR — узел, которого официально не существует.">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,500;0,600;0,700;1,500&family=IBM+Plex+Mono:wght@400;500;600&family=VT323&display=swap');
+
+:root {
+  --void: #08090a;
+  --panel: #0e100e;
+  --panel-2: #141812;
+  --line: #23291f;
+  --text: #d6dccd;
+  --text-dim: #7c8574;
+  --amber: #ffb000;
+  --amber-dim: #8a6014;
+  --green: #39ff8c;
+  --red: #ff2e4d;
+  --cyan: #21e6ff;
+  --radius: 2px;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --display: 'Chakra Petch', var(--mono);
+  --crt: 'VT323', var(--mono);
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-x: hidden;
+  position: relative;
+}
+
+::selection { background: var(--amber); color: var(--void); }
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+a { color: var(--amber); }
+
+/* ---------- ambient layers ---------- */
+#matrix-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  opacity: .5;
+}
+
+.scanlines {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0,0,0,0) 0px,
+    rgba(0,0,0,0) 1px,
+    rgba(0,0,0,.14) 2px,
+    rgba(0,0,0,.14) 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+.vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%);
+}
+
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  92% { opacity: 1; }
+  93% { opacity: .86; }
+  94% { opacity: 1; }
+  96% { opacity: .92; }
+}
+.crt-flicker { animation: flicker 6s infinite; }
+
+body.matrix-boost .scanlines { mix-blend-mode: screen; }
+
+@media (prefers-reduced-motion: reduce) {
+  .crt-flicker { animation: none; }
+  html { scroll-behavior: auto; }
+}
+
+/* ---------- layout shell ---------- */
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+section { position: relative; z-index: 1; }
+
+.eyebrow {
+  font-family: var(--crt);
+  font-size: 18px;
+  letter-spacing: .12em;
+  color: var(--amber);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.eyebrow::before { content: '//'; color: var(--text-dim); }
+
+h1, h2, h3 {
+  font-family: var(--display);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin: 0 0 .5em;
+  letter-spacing: .01em;
+}
+
+.section-title {
+  font-size: clamp(26px, 4vw, 38px);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+  margin-bottom: 32px;
+}
+
+/* ---------- boot overlay ---------- */
+#boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--void);
+  color: var(--green);
+  font-family: var(--mono);
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transition: opacity .6s ease, visibility .6s ease;
+}
+#boot-overlay.is-done { opacity: 0; visibility: hidden; pointer-events: none; }
+#boot-lines { max-width: 640px; margin: 0 auto; width: 100%; }
+#boot-lines div { margin-bottom: 6px; font-size: 14px; }
+.boot-bar-track {
+  max-width: 640px;
+  margin: 18px auto 0;
+  height: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+#boot-bar { height: 100%; width: 0%; background: var(--green); transition: width .2s linear; }
+.boot-skip {
+  max-width: 640px;
+  margin: 22px auto 0;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  letter-spacing: .08em;
+}
+.boot-skip:hover { color: var(--amber); }
+
+/* ---------- header ---------- */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(8,9,10,.86);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--line);
+}
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+}
+.logo {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: .04em;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+.logo::after {
+  content: attr(data-sub);
+  display: block;
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: .1em;
+  text-transform: none;
+}
+@keyframes shake {
+  0%,100% { transform: translate(0,0); }
+  20% { transform: translate(-2px,1px); color: var(--red); }
+  40% { transform: translate(2px,-1px); color: var(--cyan); }
+  60% { transform: translate(-1px,0); }
+  80% { transform: translate(1px,1px); }
+}
+.logo-shake { animation: shake .35s ease; }
+
+nav { display: flex; gap: 26px; }
+nav a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 13px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+nav a:hover { color: var(--amber); }
+nav a b { color: var(--text-dim); font-weight: 500; margin-right: 4px; }
+
+/* ---------- hero ---------- */
+.hero {
+  padding: 90px 0 70px;
+  border-bottom: 1px solid var(--line);
+}
+.glitch {
+  font-size: clamp(32px, 6vw, 62px);
+  line-height: 1.05;
+  position: relative;
+  color: var(--text);
+  max-width: 820px;
+}
+.glitch span { position: relative; display: inline-block; }
+.glitch::before, .glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%;
+  overflow: hidden;
+  opacity: .7;
+}
+.glitch::before {
+  color: var(--red);
+  animation: glitchTop 3.4s infinite linear;
+  clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%);
+}
+.glitch::after {
+  color: var(--cyan);
+  animation: glitchBot 3.9s infinite linear;
+  clip-path: polygon(0 55%, 100% 55%, 100% 100%, 0 100%);
+}
+@keyframes glitchTop {
+  0%, 92%, 100% { transform: translate(0,0); }
+  93% { transform: translate(-3px,-1px); }
+  94% { transform: translate(3px,1px); }
+  95% { transform: translate(-2px,0); }
+}
+@keyframes glitchBot {
+  0%, 90%, 100% { transform: translate(0,0); }
+  91% { transform: translate(2px,1px); }
+  92% { transform: translate(-3px,-1px); }
+  93% { transform: translate(2px,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .glitch::before, .glitch::after { animation: none; opacity: 0; }
+}
+
+.hero-sub {
+  max-width: 560px;
+  color: var(--text-dim);
+  font-size: 15px;
+  margin: 22px 0 30px;
+}
+
+.btn {
+  font-family: var(--mono);
+  background: transparent;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  padding: 12px 22px;
+  font-size: 13px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  transition: background .15s, color .15s;
+}
+.btn:hover { background: var(--amber); color: var(--void); }
+.btn--ghost { border-color: var(--line); color: var(--text-dim); }
+.btn--ghost:hover { border-color: var(--text-dim); background: transparent; color: var(--text); }
+
+/* ---------- services ---------- */
+.services { padding: 80px 0; border-bottom: 1px solid var(--line); }
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+.service-card {
+  background: var(--panel);
+  padding: 24px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.service-card:hover { background: var(--panel-2); }
+.service-card .code {
+  font-family: var(--crt);
+  font-size: 15px;
+  color: var(--text-dim);
+}
+.service-card h3 {
+  font-size: 18px;
+  margin: 8px 0 10px;
+  color: var(--text);
+}
+.service-card p {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+.service-card .price {
+  font-family: var(--crt);
+  font-size: 17px;
+  color: var(--green);
+}
+.service-card .run {
+  float: right;
+  font-size: 11px;
+  letter-spacing: .1em;
+  color: var(--amber);
+  text-transform: uppercase;
+}
+
+/* ---------- terminal ---------- */
+.terminal-section { padding: 80px 0; border-bottom: 1px solid var(--line); }
+#terminal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  max-width: 760px;
+}
+.term-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.term-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+.term-dot--r { background: var(--red); }
+.term-dot--a { background: var(--amber); }
+.term-dot--g { background: var(--green); }
+#term-output {
+  height: 320px;
+  overflow-y: auto;
+  padding: 16px;
+  font-size: 13.5px;
+}
+.term-line { margin-bottom: 6px; white-space: pre-wrap; word-break: break-word; }
+.term-line--result { color: var(--green); }
+.term-prompt { color: var(--amber); }
+.term-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+.term-input-row span { color: var(--amber); font-size: 13.5px; white-space: nowrap; }
+#term-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13.5px;
+  outline: none;
+}
+.term-hint { color: var(--text-dim); font-size: 12px; margin-top: 12px; max-width: 620px; }
+
+/* ---------- dossier ---------- */
+.dossier { padding: 80px 0; border-bottom: 1px solid var(--line); }
+.dossier-body { max-width: 680px; color: var(--text-dim); font-size: 14.5px; }
+.dossier-body p { margin: 0 0 16px; }
+.redacted {
+  background: #1a1a1a;
+  color: transparent;
+  cursor: pointer;
+  border-radius: 1px;
+  padding: 0 2px;
+  transition: color .1s, background .1s;
+}
+.redacted.is-revealed {
+  background: transparent;
+  color: var(--amber);
+}
+.dossier-note { font-size: 12px; color: var(--text-dim); margin-top: 18px; }
+
+/* ---------- footer ---------- */
+footer { padding: 60px 0 100px; }
+.pgp-block {
+  border: 1px dashed var(--line);
+  padding: 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  max-width: 640px;
+  overflow-wrap: anywhere;
+  margin: 18px 0 26px;
+}
+.footer-meta {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+#hidden-dot {
+  opacity: .18;
+  cursor: default;
+}
+#hidden-dot:hover { opacity: .4; }
+
+/* ---------- toasts ---------- */
+#toast-host {
+  position: fixed;
+  bottom: 26px;
+  left: 26px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.toast {
+  background: var(--panel-2);
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 10px 14px;
+  max-width: 320px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .3s, transform .3s;
+}
+.toast--in { opacity: 1; transform: translateY(0); }
+.toast--danger { border-color: var(--red); color: var(--red); }
+.toast--info { border-color: var(--cyan); color: var(--cyan); }
+
+/* ---------- achievements ---------- */
+#achv-toggle {
+  position: fixed;
+  bottom: 26px;
+  right: 26px;
+  z-index: 60;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#achv-toggle:hover { border-color: var(--amber); color: var(--amber); }
+#achv-panel {
+  position: fixed;
+  bottom: 72px;
+  right: 26px;
+  z-index: 60;
+  width: 300px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 16px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: opacity .2s, transform .2s, visibility .2s;
+}
+#achv-panel.is-active { opacity: 1; visibility: visible; transform: translateY(0); }
+#achv-panel h4 {
+  margin: 0 0 12px;
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: .08em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+#secrets-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.secret-row { display: flex; gap: 10px; font-size: 12px; color: var(--text-dim); align-items: flex-start; }
+.secret-row--found { color: var(--text); }
+.secret-icon { color: var(--text-dim); }
+.secret-row--found .secret-icon { color: var(--green); }
+.secret-row small { color: var(--text-dim); }
+
+/* ---------- modal ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0,0,0,.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .2s, visibility .2s;
+  padding: 20px;
+}
+.modal-overlay.is-active { opacity: 1; visibility: visible; }
+.modal-box {
+  background: var(--panel);
+  border: 1px solid var(--amber);
+  width: 100%;
+  max-width: 560px;
+}
+.modal-titlebar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: .06em;
+}
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+}
+.modal-close:hover { color: var(--red); }
+.modal-body { padding: 16px; min-height: 140px; font-size: 13.5px; }
+
+/* ---------- konami flash ---------- */
+#konami-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: var(--green);
+  mix-blend-mode: difference;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s;
+}
+#konami-flash.is-active { opacity: .9; animation: strobe .18s steps(2) 4; }
+#konami-flash.is-red { background: var(--red); }
+@keyframes strobe { 50% { opacity: .1; } }
+
+/* ---------- finale ---------- */
+#finale-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(6,7,6,.94);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 30px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .5s, visibility .5s;
+}
+#finale-overlay.is-active { opacity: 1; visibility: visible; }
+#finale-overlay .flag {
+  font-family: var(--crt);
+  font-size: 26px;
+  color: var(--green);
+  margin-top: 14px;
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 640px) {
+  nav { gap: 14px; flex-wrap: wrap; }
+  .header-row { flex-direction: column; align-items: flex-start; gap: 12px; }
+  #achv-panel { width: calc(100vw - 40px); right: 20px; }
+  .hero { padding: 60px 0 40px; }
+}
+
+</style>
+</head>
+<body class="crt-flicker">
+
+<canvas id="matrix-canvas" aria-hidden="true"></canvas>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+<div id="konami-flash" aria-hidden="true"></div>
+<div id="toast-host" aria-live="polite"></div>
+
+<!-- Если ты читаешь это через "Просмотр кода страницы" — ты уже на верном пути.
+     Подсказка №1: где-то на этой странице спрятан base64.
+     Подсказка №2: ↑ ↑ ↓ ↓ ← → ← → B A -->
+
+<!-- ===================== BOOT OVERLAY ===================== -->
+<div id="boot-overlay">
+  <div id="boot-lines"></div>
+  <div class="boot-bar-track"><div id="boot-bar"></div></div>
+  <div class="boot-skip" id="boot-skip">[ пропустить загрузку ]</div>
+</div>
+
+<!-- ===================== HEADER ===================== -->
+<header>
+  <div class="wrap header-row">
+    <div class="logo" id="site-logo" data-sub="nullptr://теневой_узел">NULLPTR_</div>
+    <nav>
+      <a href="#services"><b>01</b>Услуги</a>
+      <a href="#terminal"><b>02</b>Терминал</a>
+      <a href="#dossier"><b>03</b>Досье</a>
+      <a href="#" id="nav-mystery"><b>0x</b>???</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow">СТАТУС УЗЛА: АНОНИМНО</p>
+    <h1 class="glitch" data-text="МЫ ТАМ, ГДЕ ЗАКАНЧИВАЮТСЯ ЛОГИ">МЫ ТАМ, ГДЕ ЗАКАНЧИВАЮТСЯ ЛОГИ</h1>
+    <p class="hero-sub">NULLPTR — приватный узел для тех, кто знает, что спросить, и не спрашивает дважды. Ниже — витрина. Настоящая работа начинается в терминале.</p>
+    <a href="#terminal" class="btn">Открыть терминал</a>
+    <a href="#services" class="btn btn--ghost">Смотреть услуги</a>
+  </div>
+</section>
+
+<!-- ===================== SERVICES ===================== -->
+<section class="services" id="services">
+  <div class="wrap">
+    <p class="eyebrow">РАЗДЕЛ 01</p>
+    <h2 class="section-title">Услуги</h2>
+    <div class="service-grid">
+
+      <article class="service-card" data-service="social">
+        <div class="code">СЛУЖБА · A-01</div>
+        <h3>Взлом аккаунтов</h3>
+        <p>Восстановление доступа к утраченным цифровым личностям. Без лишних вопросов.</p>
+        <div class="price">от 3 чашек кофе</div>
+        <div class="run">запустить →</div>
+      </article>
+
+      <article class="service-card" data-service="ddos">
+        <div class="code">СЛУЖБА · A-02</div>
+        <h3>DDoS-атака</h3>
+        <p>Нагрузочное тестирование чужой нервной системы. Быстро, тихо, необратимо.</p>
+        <div class="price">по договорённости с реальностью</div>
+        <div class="run">запустить →</div>
+      </article>
+
+      <article class="service-card" data-service="leak">
+        <div class="code">СЛУЖБА · A-03</div>
+        <h3>Слив баз данных</h3>
+        <p>Архивация цифровых воспоминаний в удобном формате. Возврату не подлежит.</p>
+        <div class="price">1 забытый пароль</div>
+        <div class="run">запустить →</div>
+      </article>
+
+      <article class="service-card" data-service="ip">
+        <div class="code">СЛУЖБА · A-04</div>
+        <h3>Пробив по IP</h3>
+        <p>Определение геолокации с точностью до холодильника.</p>
+        <div class="price">13.37 у.е.</div>
+        <div class="run">запустить →</div>
+      </article>
+
+      <article class="service-card" data-service="pass">
+        <div class="code">СЛУЖБА · A-05</div>
+        <h3>Обход паролей</h3>
+        <p>Забыли пароль? Мы тоже. Найдём вместе.</p>
+        <div class="price">бесплатно, если стыдно</div>
+        <div class="run">запустить →</div>
+      </article>
+
+      <article class="service-card" data-service="traces">
+        <div class="code">СЛУЖБА · A-06</div>
+        <h3>Удаление следов</h3>
+        <p>Стирание истории браузера. Достоинство восстановлению не подлежит.</p>
+        <div class="price">1 честное слово</div>
+        <div class="run">запустить →</div>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TERMINAL ===================== -->
+<section class="terminal-section" id="terminal">
+  <div class="wrap">
+    <p class="eyebrow">РАЗДЕЛ 02</p>
+    <h2 class="section-title">Терминал</h2>
+
+    <div id="terminal">
+      <div class="term-titlebar">
+        <span class="term-dot term-dot--r"></span>
+        <span class="term-dot term-dot--a"></span>
+        <span class="term-dot term-dot--g"></span>
+        <span>guest@nullptr — bash</span>
+      </div>
+      <div id="term-output">
+        <div class="term-line">NULLPTR SHELL v0.13. Введи <b>help</b>, чтобы начать.</div>
+      </div>
+      <div class="term-input-row">
+        <span>guest@nullptr:~$</span>
+        <input id="term-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Командная строка">
+      </div>
+    </div>
+    <p class="term-hint">Терминал реагирует на настоящие команды. Некоторые из них ведут дальше, чем кажется.</p>
+  </div>
+</section>
+
+<!-- ===================== DOSSIER ===================== -->
+<section class="dossier" id="dossier">
+  <div class="wrap">
+    <p class="eyebrow">РАЗДЕЛ 03</p>
+    <h2 class="section-title">Досье</h2>
+    <div class="dossier-body">
+      <p>NULLPTR не имеет физического адреса, юридического лица и, по официальным данным, не существует. Всё, что вы видите — интерфейс. Всё, что за интерфейсом — <span class="redacted">не ваше дело</span>.</p>
+      <p>Настоящее имя основателя: <span class="redacted">Толя. Просто Толя. Работает по вечерам, после основной работы системным администратором в ЖЭКе</span>.</p>
+      <p>Год основания указан как <span class="redacted">2023, но лог-файл говорит про 1998 — тогда ещё не было даже слова «хакер» в паспорте</span>.</p>
+      <p>Причина, по которой сайт выглядит именно так: <span class="redacted">так было проще пугать конкурентов, чем нанимать дизайнера</span>.</p>
+    </div>
+    <p class="dossier-note">Нажимайте на закрашенные строки.</p>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer>
+  <div class="wrap">
+    <p class="eyebrow">КОНТАКТ</p>
+    <p style="max-width:520px;color:var(--text-dim);font-size:13px;">Связь: shadow[at]nullptr.void — ответ не гарантирован<span id="hidden-dot">.</span> Мы читаем всё, отвечаем на немногое.</p>
+
+    <div class="pgp-block">
+-----BEGIN PGP PUBLIC KEY BLOCK-----<br>
+mQINBGL8N0ptRootQCAAxNULLPTR0d3AxAy4KQ9fZ3v1<br>
+0JLQstC10LTQuCDRgdC70L7QstC+IFJPT1RLSUQg0LIg0YLQtdGA0LzQuNC90LDQ<br>
+uyDigJQg0Lgg0L7RgtC60YDQvtC10YLRgdGPINC/0L7RgdC70LXQtNC90LjQuSDR<br>
+gdC10LrRgNC10YIu<br>
+-----END PGP PUBLIC KEY BLOCK-----
+    </div>
+
+    <div class="footer-meta">
+      <span>© NULLPTR. Все права защищены тенью.</span>
+      <span>узел активен с 03:14 по неизвестному часовому поясу</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ===================== SERVICE MODAL ===================== -->
+<div class="modal-overlay" id="service-modal">
+  <div class="modal-box">
+    <div class="modal-titlebar">
+      <span id="service-modal-title">СЛУЖБА</span>
+      <button class="modal-close" id="service-modal-close" aria-label="Закрыть">×</button>
+    </div>
+    <div class="modal-body" id="service-modal-body"></div>
+  </div>
+</div>
+
+<!-- ===================== ACHIEVEMENTS ===================== -->
+<button id="achv-toggle">🔒 <span id="secret-count">0/10</span></button>
+<div id="achv-panel">
+  <h4>Найденные секреты</h4>
+  <ul id="secrets-list"></ul>
+</div>
+
+<!-- ===================== FINALE ===================== -->
+<div id="finale-overlay">
+  <div>
+    <h2 style="margin-bottom:10px;">ВСЕ СЕКРЕТЫ НАЙДЕНЫ</h2>
+    <p style="color:var(--text-dim);max-width:420px;">Ты прошёл дальше, чем большинство. Ядро узла открыто.</p>
+    <div class="flag">NULLPTR{всё_тайное_становится_явным}</div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   NULLPTR — client-side logic
+   Секции: state, secrets, toasts, boot, matrix rain, konami,
+   terminal, services, dossier, misc easter eggs.
+   ============================================================ */
+
+(function () {
+  "use strict";
+
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- state & secrets ---------- */
+  var SECRETS = {
+    konami:     { name: "Код Конами",        desc: "Ввёл классическую последовательность клавиш." },
+    logo:       { name: "Терпение оператора", desc: "Кликнул по логотипу семь раз подряд." },
+    help:       { name: "Любопытный новичок", desc: "Ввёл команду help в терминале." },
+    hack:       { name: "Скрипт-кидди",       desc: "Запустил команду hack." },
+    ddos:       { name: "Атака на будильник", desc: "Запустил команду ddos." },
+    decode:     { name: "Дешифровщик",        desc: "Расшифровал спрятанный base64-ключ." },
+    rootkid:    { name: "Финальный код",      desc: "Ввёл секретное слово из расшифровки." },
+    console:    { name: "Инспектор консоли",  desc: "Выполнил функцию, подсказанную в консоли браузера." },
+    dot:        { name: "Внимательный глаз",  desc: "Нашёл невидимую точку на странице." },
+    matrixword: { name: "Слово силы",         desc: "Напечатал matrix где угодно на странице." }
+  };
+  var TOTAL_SECRETS = Object.keys(SECRETS).length;
+  var found = Object.create(null);
+  var logoClicks = 0;
+
+  var HIDDEN_B64 = "0JLQstC10LTQuCDRgdC70L7QstC+IFJPT1RLSUQg0LIg0YLQtdGA0LzQuNC90LDQuyDigJQg0Lgg0L7RgtC60YDQvtC10YLRgdGPINC/0L7RgdC70LXQtNC90LjQuSDRgdC10LrRgNC10YIu";
+  var SECRET_WORD = "rootkid";
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  /* ---------- toast ---------- */
+  function toast(text, kind) {
+    var host = document.getElementById("toast-host");
+    if (!host) return;
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " toast--" + kind : "");
+    el.textContent = text;
+    host.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add("toast--in"); });
+    setTimeout(function () {
+      el.classList.remove("toast--in");
+      setTimeout(function () { el.remove(); }, 400);
+    }, 3600);
+  }
+
+  /* ---------- achievements panel ---------- */
+  function updateCounter() {
+    var n = Object.keys(found).length;
+    var counter = document.getElementById("secret-count");
+    if (counter) counter.textContent = n + "/" + TOTAL_SECRETS;
+    var list = document.getElementById("secrets-list");
+    if (list) {
+      list.innerHTML = "";
+      Object.keys(SECRETS).forEach(function (key) {
+        var s = SECRETS[key];
+        var row = document.createElement("li");
+        if (found[key]) {
+          row.className = "secret-row secret-row--found";
+          row.innerHTML = '<span class="secret-icon">◉</span><span><b>' + escapeHtml(s.name) + '</b><br><small>' + escapeHtml(s.desc) + "</small></span>";
+        } else {
+          row.className = "secret-row";
+          row.innerHTML = '<span class="secret-icon">◯</span><span>?????????????</span>';
+        }
+        list.appendChild(row);
+      });
+    }
+    if (n === TOTAL_SECRETS) {
+      setTimeout(showFinale, 500);
+    }
+  }
+
+  function unlock(key) {
+    if (!SECRETS[key] || found[key]) return;
+    found[key] = true;
+    toast("🔓 Секрет найден: " + SECRETS[key].name, "unlock");
+    updateCounter();
+  }
+
+  var finaleShown = false;
+  function showFinale() {
+    if (finaleShown) return;
+    finaleShown = true;
+    var overlay = document.getElementById("finale-overlay");
+    if (overlay) overlay.classList.add("is-active");
+  }
+
+  /* ---------- boot sequence ---------- */
+  function runBoot() {
+    var lines = [
+      "INITIALIZING NULLPTR CORE...",
+      "MOUNTING SHADOW VOLUMES... OK",
+      "ESTABLISHING UNTRACEABLE LINK... OK",
+      "BYPASSING PERIMETER FIREWALL... OK",
+      "DECRYPTING INTERFACE LAYER... OK",
+      "СОЕДИНЕНИЕ УСТАНОВЛЕНО. ДОСТУП РАЗРЕШЁН."
+    ];
+    var out = document.getElementById("boot-lines");
+    var overlay = document.getElementById("boot-overlay");
+    var bar = document.getElementById("boot-bar");
+    if (!out || !overlay) return;
+
+    if (reduceMotion) {
+      overlay.classList.add("is-done");
+      return;
+    }
+
+    var i = 0;
+    function step() {
+      if (i < lines.length) {
+        var p = document.createElement("div");
+        p.textContent = lines[i];
+        out.appendChild(p);
+        if (bar) bar.style.width = Math.round(((i + 1) / lines.length) * 100) + "%";
+        i++;
+        setTimeout(step, 260 + Math.random() * 220);
+      } else {
+        setTimeout(function () { overlay.classList.add("is-done"); }, 500);
+      }
+    }
+    setTimeout(step, 300);
+
+    var skip = document.getElementById("boot-skip");
+    if (skip) {
+      skip.addEventListener("click", function () {
+        overlay.classList.add("is-done");
+      });
+    }
+  }
+
+  /* ---------- matrix rain ---------- */
+  function initMatrixRain() {
+    var canvas = document.getElementById("matrix-canvas");
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var chars = "01アイウエオカキクケコサシスセソ0123456789ABCDEF#$%&";
+    var fontSize = 15;
+    var columns, drops;
+    var boostUntil = 0;
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      columns = Math.floor(canvas.width / fontSize);
+      drops = new Array(columns).fill(0).map(function () { return Math.random() * -50; });
+    }
+    resize();
+    window.addEventListener("resize", resize);
+
+    function draw() {
+      var boosted = Date.now() < boostUntil;
+      var baseAlpha = boosted ? 0.12 : 0.06;
+      ctx.fillStyle = "rgba(8,9,10," + (boosted ? 0.08 : 0.11) + ")";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = fontSize + "px 'IBM Plex Mono', monospace";
+      for (var x = 0; x < drops.length; x++) {
+        var char = chars[Math.floor(Math.random() * chars.length)];
+        ctx.fillStyle = boosted ? "rgba(255,176,0," + (0.55 + Math.random() * 0.3) + ")" : "rgba(57,255,140," + baseAlpha + ")";
+        ctx.fillText(char, x * fontSize, drops[x] * fontSize);
+        if (drops[x] * fontSize > canvas.height && Math.random() > 0.975) {
+          drops[x] = 0;
+        }
+        drops[x] += boosted ? 1.4 : 0.55;
+      }
+      requestAnimationFrame(draw);
+    }
+    if (!reduceMotion) requestAnimationFrame(draw);
+
+    window.__activateMatrixBoost = function (ms) {
+      boostUntil = Date.now() + (ms || 4000);
+      document.body.classList.add("matrix-boost");
+      setTimeout(function () { document.body.classList.remove("matrix-boost"); }, ms || 4000);
+    };
+  }
+
+  function activateMatrixBoost() {
+    if (window.__activateMatrixBoost) window.__activateMatrixBoost(4500);
+    unlock("matrixword");
+    toast("МАТРИЦА УСКОРЕНА", "info");
+  }
+
+  /* ---------- konami code ---------- */
+  function initKonami() {
+    var seq = ["arrowup", "arrowup", "arrowdown", "arrowdown", "arrowleft", "arrowright", "arrowleft", "arrowright", "b", "a"];
+    var pos = 0;
+    window.addEventListener("keydown", function (e) {
+      var key = e.key.toLowerCase();
+      if (key === seq[pos]) {
+        pos++;
+        if (pos === seq.length) {
+          pos = 0;
+          triggerKonami();
+        }
+      } else {
+        pos = key === seq[0] ? 1 : 0;
+      }
+    });
+  }
+
+  function triggerKonami() {
+    unlock("konami");
+    var flash = document.getElementById("konami-flash");
+    if (flash) {
+      flash.classList.add("is-active");
+      setTimeout(function () { flash.classList.remove("is-active"); }, 1600);
+    }
+    activateMatrixBoost();
+    toast("ROOT ACCESS GRANTED", "danger");
+  }
+
+  /* ---------- type "matrix" anywhere ---------- */
+  function initTypeAnywhere() {
+    var target = "matrix";
+    var buf = "";
+    window.addEventListener("keydown", function (e) {
+      var terminalFocused = document.activeElement && document.activeElement.id === "term-input";
+      if (terminalFocused) return;
+      if (e.key.length !== 1) return;
+      buf = (buf + e.key.toLowerCase()).slice(-target.length);
+      if (buf === target) {
+        activateMatrixBoost();
+      }
+    });
+  }
+
+  /* ---------- logo clicks ---------- */
+  function initLogo() {
+    var logo = document.getElementById("site-logo");
+    if (!logo) return;
+    logo.addEventListener("click", function () {
+      logoClicks++;
+      logo.classList.remove("logo-shake");
+      void logo.offsetWidth;
+      logo.classList.add("logo-shake");
+      if (logoClicks === 7) {
+        unlock("logo");
+        toast("Оператор заметил твоё терпение.", "unlock");
+        logoClicks = 0;
+      }
+    });
+  }
+
+  /* ---------- hidden dot ---------- */
+  function initHiddenDot() {
+    var dot = document.getElementById("hidden-dot");
+    if (!dot) return;
+    dot.addEventListener("click", function () {
+      unlock("dot");
+    });
+  }
+
+  /* ---------- tab blur title trick ---------- */
+  function initBlurTitle() {
+    var original = document.title;
+    var away = "Куда ты уходишь? 👀";
+    window.addEventListener("blur", function () { document.title = away; });
+    window.addEventListener("focus", function () { document.title = original; });
+  }
+
+  /* ---------- console easter egg ---------- */
+  function initConsoleEgg() {
+    try {
+      console.log(
+        "%cNULLPTR%c\nЛюбопытство — хорошая черта для того, кто открыл консоль.\nВыполни rootAccess() и посмотри, что будет.",
+        "color:#ffb000; font-size:28px; font-weight:bold; font-family:monospace;",
+        "color:#8a9382; font-size:13px; font-family:monospace;"
+      );
+    } catch (err) { /* noop */ }
+    window.rootAccess = function () {
+      unlock("console");
+      console.log("%cACCESS: PARTIAL. Кое-что ещё спрятано в base64 внизу страницы.", "color:#39ff8c; font-family:monospace;");
+      return "ACCESS: PARTIAL";
+    };
+  }
+
+  /* ---------- redacted dossier blocks ---------- */
+  function initRedacted() {
+    var blocks = document.querySelectorAll(".redacted");
+    blocks.forEach(function (b) {
+      b.addEventListener("click", function () {
+        b.classList.toggle("is-revealed");
+      });
+    });
+  }
+
+  /* ---------- terminal ---------- */
+  function initTerminal() {
+    var input = document.getElementById("term-input");
+    var output = document.getElementById("term-output");
+    var win = document.getElementById("terminal");
+    if (!input || !output) return;
+
+    function print(html) {
+      var line = document.createElement("div");
+      line.className = "term-line";
+      line.innerHTML = html;
+      output.appendChild(line);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    function printDelayed(lines, done) {
+      var i = 0;
+      function step() {
+        if (i < lines.length) {
+          print(lines[i]);
+          i++;
+          setTimeout(step, 380 + Math.random() * 260);
+        } else if (done) {
+          done();
+        }
+      }
+      step();
+    }
+
+    var FILES = {
+      "secret.txt": "Загадка: то, что скрыто в base64 внизу страницы — не пароль, а инструкция. Расшифруй.",
+      "readme.md": "NULLPTR v0.13 — узел, которого официально не существует. Добро пожаловать.",
+      "passwords.txt": "[ДОСТУП ЗАБЛОКИРОВАН]. Как и твоя мотивация по понедельникам.",
+      ".flag": "Флаги не хранятся в файлах. Они зарабатываются командой flag."
+    };
+
+    var COMMANDS = {
+      help: function () {
+        unlock("help");
+        return [
+          "Доступные команды:",
+          "help · whoami · ls · cat &lt;файл&gt; · date · sudo · clear",
+          "matrix · hack · ddos [цель] · decode [base64] · flag · exit"
+        ];
+      },
+      whoami: function () {
+        return ["Ты — тот, кто читает интерфейс хакерского сайта в " + new Date().getHours() + ":" + String(new Date().getMinutes()).padStart(2, "0") + ". Мы знаем."];
+      },
+      ls: function () {
+        return ["secret.txt&nbsp;&nbsp;readme.md&nbsp;&nbsp;passwords.txt&nbsp;&nbsp;.flag"];
+      },
+      cat: function (arg) {
+        if (!arg) return ["cat: укажи файл. Например: cat secret.txt"];
+        var f = FILES[arg];
+        return [f ? escapeHtml(f) : "cat: файл '" + escapeHtml(arg) + "' не найден."];
+      },
+      date: function () {
+        return ["Системное время узла: " + new Date().toString()];
+      },
+      sudo: function () {
+        return ["Permission denied: ты не root в этой реальности."];
+      },
+      clear: function () {
+        output.innerHTML = "";
+        return [];
+      },
+      matrix: function () {
+        activateMatrixBoost();
+        return ["Матрица разогнана на 4.5 секунды."];
+      },
+      hack: function (arg) {
+        unlock("hack");
+        var target = arg || "неизвестную_цель";
+        printDelayed([
+          "Инициализация вектора атаки на " + escapeHtml(target) + "...",
+          "[■□□□□□□□□□] 10% — подбор портов",
+          "[■■■■□□□□□□] 40% — обход антивируса бабушки",
+          "[■■■■■■■□□□] 70% — расшифровка Wi-Fi соседа",
+          "[■■■■■■■■■■] 100% — готово",
+          "<b>Взлом завершён:</b> Wi-Fi соседа. Новый пароль — 'FBI_Open_Up'."
+        ]);
+        return [];
+      },
+      ddos: function (arg) {
+        unlock("ddos");
+        var target = arg || "будильник";
+        printDelayed([
+          "Запуск нагрузочной атаки на «" + escapeHtml(target) + "»...",
+          "Отправка пакетов настойчивости...",
+          "[####______] 40%",
+          "[########__] 80%",
+          "[##########] 100%",
+          "<b>Цель повержена:</b> " + escapeHtml(target) + " больше не отвечает на звонки в понедельник."
+        ]);
+        return [];
+      },
+      decode: function (arg) {
+        var payload = arg || HIDDEN_B64;
+        try {
+          var text = decodeURIComponent(escape(atob(payload)));
+          unlock("decode");
+          return ["Расшифровано: " + escapeHtml(text)];
+        } catch (err) {
+          return ["decode: это не похоже на корректный base64."];
+        }
+      },
+      flag: function () {
+        if (!found.decode) return ["Сначала найди то, что спрятано внизу страницы."];
+        if (!found.rootkid) return ["Ты близко. Введи расшифрованное секретное слово прямо в терминал."];
+        return ["NULLPTR{всё_тайное_становится_явным}"];
+      },
+      exit: function () {
+        return ["Соединение нельзя разорвать. Мы уже внутри."];
+      }
+    };
+
+    function handle(raw) {
+      var trimmed = raw.trim();
+      print('<span class="term-prompt">guest@nullptr:~$</span> ' + escapeHtml(trimmed));
+      if (!trimmed) return;
+
+      var lower = trimmed.toLowerCase();
+      if (lower === SECRET_WORD) {
+        unlock("rootkid");
+        print("<b>Секретное слово принято.</b> Последний замок снят.");
+        return;
+      }
+
+      var parts = trimmed.split(/\s+/);
+      var cmd = parts[0].toLowerCase();
+      var arg = parts.slice(1).join(" ");
+
+      if (COMMANDS[cmd]) {
+        var res = COMMANDS[cmd](arg);
+        res.forEach(function (l) { print(l); });
+      } else {
+        print("команда не найдена: " + escapeHtml(cmd) + ". Введи help.");
+      }
+    }
+
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        var val = input.value;
+        input.value = "";
+        handle(val);
+      }
+    });
+
+    if (win) {
+      win.addEventListener("click", function () { input.focus(); });
+    }
+  }
+
+  /* ---------- services (dossier cards -> modal) ---------- */
+  var SERVICE_PROCESSES = {
+    social: {
+      title: "ВЗЛОМ АККАУНТОВ",
+      lines: [
+        "Подключение к теневому шлюзу...",
+        "Перебор 14 000 паролей вида 'qwerty123'...",
+        "Восстановление доступа..."
+      ],
+      result: "Результат: доступ восстановлен. К аккаунту, который ты и так помнил."
+    },
+    ddos: {
+      title: "DDoS-АТАКА",
+      lines: [
+        "Сбор ботнета из чайников и роутеров...",
+        "Синхронизация часовых поясов...",
+        "Отправка волны трафика..."
+      ],
+      result: "Результат: успешно перегружен будильник. Понедельник отменяется."
+    },
+    leak: {
+      title: "СЛИВ БАЗ ДАННЫХ",
+      lines: [
+        "Индексация цифровых воспоминаний...",
+        "Архивация в формат .zip.zip.zip...",
+        "Загрузка на защищённый сервер..."
+      ],
+      result: "Результат: найдена только переписка про 'купить хлеб'. Слито в /dev/null."
+    },
+    ip: {
+      title: "ПРОБИВ ПО IP",
+      lines: [
+        "Триангуляция сигнала...",
+        "Сверка с картой местности...",
+        "Определение координат..."
+      ],
+      result: "Результат: цель находится на кухне. Ест бутерброд."
+    },
+    pass: {
+      title: "ОБХОД ПАРОЛЕЙ",
+      lines: [
+        "Анализ психотипа владельца пароля...",
+        "Проверка варианта 'дата_рождения+!'...",
+        "Подбор..."
+      ],
+      result: "Результат: пароль был '123456'. Мы тоже удивлены."
+    },
+    traces: {
+      title: "УДАЛЕНИЕ СЛЕДОВ",
+      lines: [
+        "Сканирование истории браузера...",
+        "Обнаружено 812 вкладок...",
+        "Стирание..."
+      ],
+      result: "Результат: история очищена. Достоинство — не восстановлено."
+    }
+  };
+
+  function initServices() {
+    var cards = document.querySelectorAll(".service-card");
+    var modal = document.getElementById("service-modal");
+    var modalTitle = document.getElementById("service-modal-title");
+    var modalBody = document.getElementById("service-modal-body");
+    var closeBtn = document.getElementById("service-modal-close");
+    if (!modal) return;
+
+    function openModal(key) {
+      var svc = SERVICE_PROCESSES[key];
+      if (!svc) return;
+      modalTitle.textContent = svc.title;
+      modalBody.innerHTML = "";
+      modal.classList.add("is-active");
+      var i = 0;
+      function step() {
+        if (i < svc.lines.length) {
+          var p = document.createElement("div");
+          p.className = "term-line";
+          p.textContent = svc.lines[i];
+          modalBody.appendChild(p);
+          i++;
+          setTimeout(step, 420 + Math.random() * 260);
+        } else {
+          var res = document.createElement("div");
+          res.className = "term-line term-line--result";
+          res.innerHTML = svc.result;
+          modalBody.appendChild(res);
+        }
+      }
+      step();
+    }
+
+    cards.forEach(function (card) {
+      card.addEventListener("click", function () {
+        openModal(card.getAttribute("data-service"));
+      });
+    });
+    if (closeBtn) closeBtn.addEventListener("click", function () { modal.classList.remove("is-active"); });
+    modal.addEventListener("click", function (e) {
+      if (e.target === modal) modal.classList.remove("is-active");
+    });
+  }
+
+  /* ---------- achievements panel toggle ---------- */
+  function initAchievementsPanel() {
+    var btn = document.getElementById("achv-toggle");
+    var panel = document.getElementById("achv-panel");
+    if (!btn || !panel) return;
+    btn.addEventListener("click", function () {
+      panel.classList.toggle("is-active");
+    });
+  }
+
+  /* ---------- nav mystery item ---------- */
+  function initMysteryNav() {
+    var el = document.getElementById("nav-mystery");
+    if (!el) return;
+    el.addEventListener("click", function (e) {
+      e.preventDefault();
+      var flash = document.getElementById("konami-flash");
+      if (flash) {
+        flash.classList.add("is-active", "is-red");
+        setTimeout(function () { flash.classList.remove("is-active", "is-red"); }, 700);
+      }
+      toast("ПОПЫТКА ДОСТУПА ЗАФИКСИРОВАНА · попробуй код Konami", "danger");
+    });
+  }
+
+  /* ---------- init ---------- */
+  document.addEventListener("DOMContentLoaded", function () {
+    runBoot();
+    initMatrixRain();
+    initKonami();
+    initTypeAnywhere();
+    initLogo();
+    initHiddenDot();
+    initBlurTitle();
+    initConsoleEgg();
+    initRedacted();
+    initTerminal();
+    initServices();
+    initAchievementsPanel();
+    initMysteryNav();
+    updateCounter();
+  });
+})();
+
+</script>
+</body>
+</html>
